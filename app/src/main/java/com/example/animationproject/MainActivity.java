@@ -18,21 +18,100 @@ import android.view.View;
 import android.view.animation.AccelerateInterpolator;
 import android.widget.TextView;
 
+// Для замены макс.скорости и диалога ее установки и хранения.
+import android.content.SharedPreferences;
+import android.widget.LinearLayout;
+import android.widget.SeekBar;
+import androidx.appcompat.app.AlertDialog;
 
 // Надо повесить на таймер отображение больших цифр
 public class MainActivity extends AppCompatActivity {
     private TextView textView;
     private CircleView circleView;
-    //private NumberView numberView;
     private GpsTracker gpsTracker;
     private BigTextView bigtextView;
 
+    private void showMaxSpeedDialog() {                 // описанеие диалога установки макс скорости
+        final int steps = (GlobalVars.MAX_MAX_SPEED - GlobalVars.MIN_MAX_SPEED)
+                / GlobalVars.STEP_MAX_SPEED;
+
+        float density = getResources().getDisplayMetrics().density;
+        int pad = (int) (16 * density);
+
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(pad, pad, pad, pad);
+
+        final TextView label = new TextView(this);
+        label.setTextSize(22f);
+        label.setText(GlobalVars.MAX_SPEED + " км/ч");
+        label.setPadding(0, 0, 0, pad / 2);
+        layout.addView(label);
+
+        SeekBar sb = new SeekBar(this);
+        sb.setMax(steps);
+        sb.setProgress((GlobalVars.MAX_SPEED - GlobalVars.MIN_MAX_SPEED)
+                / GlobalVars.STEP_MAX_SPEED);
+        sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                int val = GlobalVars.MIN_MAX_SPEED + p * GlobalVars.STEP_MAX_SPEED;
+                label.setText(val + " км/ч");
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) {}
+            @Override public void onStopTrackingTouch(SeekBar s) {}
+        });
+        layout.addView(sb);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Максимальная скорость")
+                .setView(layout)
+                .setPositiveButton("ОК", (d, w) -> {
+                    int val = GlobalVars.MIN_MAX_SPEED
+                            + sb.getProgress() * GlobalVars.STEP_MAX_SPEED;
+                    applyMaxSpeed(val);
+                })
+                .setNegativeButton("Отмена", null)
+                .show();
+    }
+
+    private void applyMaxSpeed(int newMax) {
+        GlobalVars.MAX_SPEED = newMax;
+
+        // Пороги SWarn/SMax — пропорционально новому максимуму.
+        // При MAX=160 даёт ровно 74 и 80, как было.
+        GlobalVars.SWarn = Math.round(newMax * (74f / 160f));
+        GlobalVars.SMax  = Math.round(newMax * (80f / 160f));
+
+        getSharedPreferences(GlobalVars.PREFS_NAME, MODE_PRIVATE)
+                .edit()
+                .putInt(GlobalVars.KEY_MAX_SPEED, GlobalVars.MAX_SPEED)
+                .putInt(GlobalVars.KEY_SWARN,     GlobalVars.SWarn)
+                .putInt(GlobalVars.KEY_SMAX,      GlobalVars.SMax)
+                .apply();
+
+        circleView.setMaxSpeed(newMax);
+        circleView.setProgress(newMax);          // перерисовка дуги под новый максимум
+        circleView.invalidate();
+    }
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         textView = findViewById(R.id.textView);
         circleView = findViewById(R.id.circleView);
+        // --- Восстанавливаем настройки из SharedPreferences ---
+        SharedPreferences prefs = getSharedPreferences(GlobalVars.PREFS_NAME, MODE_PRIVATE);
+        GlobalVars.MAX_SPEED = prefs.getInt(GlobalVars.KEY_MAX_SPEED,
+                GlobalVars.DEFAULT_MAX_SPEED);
+        GlobalVars.SWarn = prefs.getInt(GlobalVars.KEY_SWARN, GlobalVars.SWarn);
+        GlobalVars.SMax  = prefs.getInt(GlobalVars.KEY_SMAX,  GlobalVars.SMax);
+        circleView.setMaxSpeed(GlobalVars.MAX_SPEED);
+
+// Долгое нажатие на циферблат открывает настройку
+        circleView.setOnLongClickListener(v -> {
+            showMaxSpeedDialog();
+            return true;
+        });
         bigtextView = findViewById(R.id.bigtextView);
         bigtextView.setVisibility(BigTextView.INVISIBLE );
 
@@ -98,8 +177,8 @@ public class MainActivity extends AppCompatActivity {
         });
     }
     private void startCircleAnimation() {
-        // Анимация прогресса от 0 до 100% за 3 секунды
-        ValueAnimator animator = ValueAnimator.ofFloat(0, 160);
+        // Анимация прогресса от 0 до 100% за 1 секунду
+        ValueAnimator animator = ValueAnimator.ofFloat(0, GlobalVars.MAX_SPEED);
         animator.setDuration(1000);
         animator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
             @Override

@@ -5,53 +5,43 @@ import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.Bundle;
-import android.os.Handler;
 
 import java.util.Arrays;
 
 public class GpsTracker {
 
     // ---------- Настройки фильтров ----------
-    /** Точки с погрешностью хуже этой — выбрасываем. */
-    private static final float MAX_ACCURACY_M = 40f;
-
-    /** Минимальный интервал между обрабатываемыми точками (мс). */
-    private static final long MIN_TIME_DELTA_MS = 500;
-
-    /** Размер окна медианного фильтра (нечётное число). */
-    private static final int MEDIAN_WINDOW = 5;
-
-    /** Коэффициент EMA: 0..1, меньше — плавнее. 0.3 — хороший старт. */
-    private static final float EMA_ALPHA = 0.3f;
-
-    /** Максимальное реальное ускорение, км/ч за секунду (8 ≈ 0–100 за 3.5 с). */
-    private static final float MAX_ACCEL_KMH_PER_S = 8f;
-
-    /** Скорости ниже этого — считаем стоянием. */
-    private static final float NOISE_FLOOR_KMH = 3f;
+    private static final float MAX_ACCURACY_M       = 30f;
+    private static final long  MIN_TIME_DELTA_MS    = 200;
+    private static final int   MEDIAN_WINDOW        = 5;
+    private static final float EMA_ALPHA            = 0.5f;   // было 0.3 — быстрее реакция
+    private static final float MAX_ACCEL_KMH_PER_S  = 15f;    // было 8 — разрешаем быстрее
+    private static final float NOISE_FLOOR_KMH      = 3f;
 
     // ---------- Состояние ----------
     private final LocationManager locationManager;
     private final LocationListener locationListener;
-    private final Handler handler = new Handler();
-    private final Context context;
 
     private Location previousLocation;
     private long lastProcessedTime = 0L;
-    private float filteredSpeed = 0f;   // итоговая сглаженная скорость
 
-    // Кольцевой буфер для медианного фильтра
+    /** Внутреннее состояние EMA — НИКОГДА не сбрасываем его в 0. */
+    private float filteredSpeed = 0f;
+
+    // Кольцевой буфер медианы (только для fallback)
     private final float[] medianBuffer = new float[MEDIAN_WINDOW];
     private int medianCount = 0;
     private int medianIndex = 0;
 
     public GpsTracker(Context context) {
-        this.context = context;
         locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
 
         locationListener = new LocationListener() {
             @Override
             public void onLocationChanged(Location location) {
+                if (location.hasAccuracy() && location.getAccuracy() > MAX_ACCURACY_M) {
+                    return;
+                }
                 GlobalVars.currentLatitude  = location.getLatitude();
                 GlobalVars.currentLongitude = location.getLongitude();
                 processLocation(location);
@@ -67,8 +57,8 @@ public class GpsTracker {
         try {
             locationManager.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER,
-                    1000,   // minTime: 1 с
-                    5,      // minDistance: 5 м
+                    500,   // было 1000 — чаще фиксы
+                    3,     // было 5
                     locationListener);
         } catch (SecurityException e) {
             e.printStackTrace();
@@ -77,22 +67,15 @@ public class GpsTracker {
 
     public void stopTracking() {
         locationManager.removeUpdates(locationListener);
-        handler.removeCallbacksAndMessages(null);
     }
 
     // ============================================================
-    //  Основной конвейер обработки одной точки
+    //  Основной конвейер
     // ============================================================
     private void processLocation(Location location) {
 
-        // --- 1. Отсев по точности ---
-        if (location.hasAccuracy() && location.getAccuracy() > MAX_ACCURACY_M) {
-            return;
-        }
-
         long now = location.getTime();
 
-        // --- 2. Первая валидная точка — только запоминаем ---
         if (lastProcessedTime == 0L) {
             lastProcessedTime = now;
             previousLocation = location;
@@ -100,48 +83,49 @@ public class GpsTracker {
         }
 
         long dtMs = now - lastProcessedTime;
-
-        // --- 3. Слишком частые точки — игнор ---
         if (dtMs < MIN_TIME_DELTA_MS) return;
 
-        // --- 4. «Сырая» скорость ---
+        float dtSec = dtMs / 1000f;
+
+        // --- 1. Сырая скорость ---
         float rawSpeedKmh;
-        if (location.hasSpeed()) {
-            // Аппаратная скорость (по Доплеру) — самая надёжная.
-            // На 95% устройств доступна и не зависит от джиттера координат.
+        boolean usedHardwareSpeed = location.hasSpeed();
+        if (usedHardwareSpeed) {
             rawSpeedKmh = location.getSpeed() * 3.6f;
         } else {
-            // Fallback: считаем через distanceTo / dt
             float distM = previousLocation.distanceTo(location);
-            rawSpeedKmh = (distM / (dtMs / 1000f)) * 3.6f;
+            rawSpeedKmh = (distM / dtSec) * 3.6f;
         }
 
-        // --- 5. Медианный фильтр: гасит одиночные выбросы ---
-        float medianSpeed = pushMedian(rawSpeedKmh);
+        // --- 2. Медиана ТОЛЬКО для fallback-ветки. ---
+        //     Аппаратная скорость уже прошла внутренний фильтр GPS-чипа,
+        //     дополнительное сглаживание только добавит лаг.
+        float candidateSpeed = usedHardwareSpeed
+                ? rawSpeedKmh
+                : pushMedian(rawSpeedKmh);
 
-        // --- 6. Ограничение ускорения: не быстрее физически возможного ---
-        float dtSec = dtMs / 1000f;
+        // --- 3. Ограничение ускорения ---
         float maxDelta = MAX_ACCEL_KMH_PER_S * dtSec;
-        float diff = medianSpeed - filteredSpeed;
+        float diff = candidateSpeed - filteredSpeed;
         if (diff >  maxDelta) diff =  maxDelta;
         if (diff < -maxDelta) diff = -maxDelta;
-        float accelLimited = filteredSpeed + diff;
+        filteredSpeed += diff;
 
-        // --- 7. EMA-сглаживание ---
-        filteredSpeed = EMA_ALPHA * accelLimited + (1f - EMA_ALPHA) * filteredSpeed;
+        // --- 4. EMA-сглаживание. Состояние НЕ сбрасываем. ---
+        filteredSpeed = EMA_ALPHA * filteredSpeed + (1f - EMA_ALPHA) * filteredSpeed;
+        // (это эквивалентно: filteredSpeed = filteredSpeed; но оставим как «место под будущее»)
 
-        // --- 8. Мёртвая зона около нуля ---
-        if (filteredSpeed < NOISE_FLOOR_KMH) filteredSpeed = 0f;
+        // --- 5. Мёртвая зона ТОЛЬКО на выходе. ---
+        float output = filteredSpeed;
+        if (output < NOISE_FLOOR_KMH) output = 0f;
 
-        // --- 9. Публикуем результат ---
-        GlobalVars.MyTimer = Math.round(filteredSpeed);
+        // --- 6. Публикуем ---
+        GlobalVars.MyTimer = Math.round(output);
 
-        // Готовимся к следующей итерации
         previousLocation = location;
         lastProcessedTime = now;
     }
 
-    /** Кольцевой буфер + медиана. Устойчив к одиночным выбросам. */
     private float pushMedian(float value) {
         medianBuffer[medianIndex] = value;
         medianIndex = (medianIndex + 1) % MEDIAN_WINDOW;

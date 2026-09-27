@@ -21,7 +21,13 @@ public class CircleView extends View {
     private float radius;
 
     // ---------- Данные шкалы ----------
-    private final int[] speedMarkers = {0, 20, 40, 50, 60, 65, 70, 75, 80, 85, 90, 100, 120, 140, 160};
+
+    /** Базовые метки для MAX_SPEED = 160. При другом максимуме масштабируются пропорционально. */
+    private static final int[] BASE_MARKERS = {0, 20, 40, 50, 60, 65, 70, 75, 80, 85, 90, 100, 120, 140, 160};
+    private static final int BASE_MAX = 160;
+
+    /** Текущие метки (пересобираются в setMaxSpeed). */
+    private int[] speedMarkers = BASE_MARKERS.clone();
     private final int[] scalePlus    = {140, 140, 160, 185, 210, 240, 255, 275, 290, 305, 300, 275, 254, 240, 240};
 
     // ---------- Состояние ----------
@@ -47,7 +53,7 @@ public class CircleView extends View {
 
     // ---------- Константы геометрии (общие для onMeasure и recomputeGeometry) ----------
     private static final float NUMBER_OFFSET = 50f;   // цифра на radius + 50
-    private static final float NUMBER_SIZE   = 40f;   // textPaint.setTextSize(40)
+    private static final float NUMBER_SIZE   = 52f;   // Размер цифр на шкале спидометра
     private static final float MARGIN        = NUMBER_OFFSET + NUMBER_SIZE;
 
     // ---------- Конструкторы ----------
@@ -77,7 +83,7 @@ public class CircleView extends View {
         markerPaint.setAntiAlias(true);
 
         textPaint.setColor(Color.WHITE);
-        textPaint.setTextSize(40);
+        textPaint.setTextSize(52);                          // Размер цифр на шкале спидометра
         textPaint.setTextAlign(Paint.Align.CENTER);
         textPaint.setAntiAlias(true);
 
@@ -197,7 +203,30 @@ public class CircleView extends View {
         this.PointPosition = Math.min(PointPosition, speedMarkers[speedMarkers.length - 1]);
         invalidate();
     }
+    // ============================================================
+    //  Настройка максимума шкалы
+    // ============================================================
+    /**
+     * Задать максимальную скорость шкалы.
+     * Метки масштабируются пропорционально, scalePlus остаётся рабочим.
+     */
+    public void setMaxSpeed(int newMax) {
+        newMax = Math.max(GlobalVars.MIN_MAX_SPEED,
+                Math.min(GlobalVars.MAX_MAX_SPEED, newMax));
+        GlobalVars.MAX_SPEED = newMax;
 
+        int[] scaled = new int[BASE_MARKERS.length];
+        for (int i = 0; i < BASE_MARKERS.length; i++) {
+            scaled[i] = Math.round(BASE_MARKERS[i] * (float) newMax / BASE_MAX);
+        }
+        // Последняя метка всегда точно равна newMax
+        scaled[scaled.length - 1] = newMax;
+        speedMarkers = scaled;
+        // не даём стрелке и дуге выйти за новый максимум
+        if (PointPosition > newMax) PointPosition = newMax;
+        if (progress     > newMax) progress     = newMax;
+        invalidate();
+    }
     @Override
     protected void onDraw(@NonNull Canvas canvas) {
         super.onDraw(canvas);
