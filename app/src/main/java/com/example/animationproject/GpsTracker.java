@@ -5,6 +5,8 @@ import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 
 import java.util.Arrays;
 
@@ -17,13 +19,16 @@ public class GpsTracker {
     private static final float EMA_ALPHA            = 0.5f;   // было 0.3 — быстрее реакция
     private static final float MAX_ACCEL_KMH_PER_S  = 15f;    // было 8 — разрешаем быстрее
     private static final float NOISE_FLOOR_KMH      = 3f;
+    private static final long  LOCATION_TIMEOUT_MS  = 8_000L;
 
     // ---------- Состояние ----------
     private final LocationManager locationManager;
     private final LocationListener locationListener;
+    private final Handler timeoutHandler = new Handler(Looper.getMainLooper());
+    private final Runnable locationTimeout = this::resetSpeed;
 
     private Location previousLocation;
-    private long lastProcessedTime = 0L;
+    private long lastProcessedElapsedRealtimeNanos = 0L;
 
     /** Внутреннее состояние EMA — НИКОГДА не сбрасываем его в 0. */
     private float filteredSpeed = 0f;
@@ -45,15 +50,22 @@ public class GpsTracker {
                 GlobalVars.currentLatitude  = location.getLatitude();
                 GlobalVars.currentLongitude = location.getLongitude();
                 processLocation(location);
+                timeoutHandler.removeCallbacks(locationTimeout);
+                timeoutHandler.postDelayed(locationTimeout, LOCATION_TIMEOUT_MS);
             }
 
             @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
             @Override public void onProviderEnabled(String provider) {}
-            @Override public void onProviderDisabled(String provider) {}
+            @Override public void onProviderDisabled(String provider) {
+                timeoutHandler.removeCallbacks(locationTimeout);
+                resetSpeed();
+            }
         };
     }
 
     public void startTracking() {
+        timeoutHandler.removeCallbacks(locationTimeout);
+        resetSpeed();
         try {
             locationManager.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER,
@@ -66,7 +78,18 @@ public class GpsTracker {
     }
 
     public void stopTracking() {
+        timeoutHandler.removeCallbacks(locationTimeout);
         locationManager.removeUpdates(locationListener);
+        resetSpeed();
+    }
+
+    private void resetSpeed() {
+        GlobalVars.MyTimer = 0;
+        filteredSpeed = 0f;
+        previousLocation = null;
+        lastProcessedElapsedRealtimeNanos = 0L;
+        medianCount = 0;
+        medianIndex = 0;
     }
 
     // ============================================================
@@ -74,18 +97,18 @@ public class GpsTracker {
     // ============================================================
     private void processLocation(Location location) {
 
-        long now = location.getTime();
+        long now = location.getElapsedRealtimeNanos();
 
-        if (lastProcessedTime == 0L) {
-            lastProcessedTime = now;
+        if (lastProcessedElapsedRealtimeNanos == 0L) {
+            lastProcessedElapsedRealtimeNanos = now;
             previousLocation = location;
             return;
         }
 
-        long dtMs = now - lastProcessedTime;
-        if (dtMs < MIN_TIME_DELTA_MS) return;
+        long dtNanos = now - lastProcessedElapsedRealtimeNanos;
+        if (dtNanos < MIN_TIME_DELTA_MS * 1_000_000L) return;
 
-        float dtSec = dtMs / 1000f;
+        float dtSec = dtNanos / 1_000_000_000f;
 
         // --- 1. Сырая скорость ---
         float rawSpeedKmh;
@@ -123,7 +146,7 @@ public class GpsTracker {
         GlobalVars.MyTimer = Math.round(output);
 
         previousLocation = location;
-        lastProcessedTime = now;
+        lastProcessedElapsedRealtimeNanos = now;
     }
 
     private float pushMedian(float value) {

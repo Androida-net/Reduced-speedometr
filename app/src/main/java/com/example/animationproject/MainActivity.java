@@ -10,6 +10,7 @@ import android.view.WindowManager;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
+import androidx.appcompat.widget.SwitchCompat;
 
 import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
@@ -21,6 +22,7 @@ import android.widget.TextView;
 // Для замены макс.скорости и диалога ее установки и хранения.
 import android.content.SharedPreferences;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.SeekBar;
 import androidx.appcompat.app.AlertDialog;
 
@@ -31,7 +33,7 @@ public class MainActivity extends AppCompatActivity {
     private GpsTracker gpsTracker;
     private BigTextView bigtextView;
 
-    private void showMaxSpeedDialog() {                 // описанеие диалога установки макс скорости
+    private void showMaxSpeedDialog() {
         final int steps = (GlobalVars.MAX_MAX_SPEED - GlobalVars.MIN_MAX_SPEED)
                 / GlobalVars.STEP_MAX_SPEED;
 
@@ -41,10 +43,12 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setPadding(pad, pad, pad, pad);
+        ScrollView scrollView = new ScrollView(this);
+        scrollView.addView(layout);
 
+        // --- Максимум шкалы ---
         final TextView label = new TextView(this);
         label.setTextSize(22f);
-        label.setText(GlobalVars.MAX_SPEED + " км/ч");
         label.setPadding(0, 0, 0, pad / 2);
         layout.addView(label);
 
@@ -52,46 +56,114 @@ public class MainActivity extends AppCompatActivity {
         sb.setMax(steps);
         sb.setProgress((GlobalVars.MAX_SPEED - GlobalVars.MIN_MAX_SPEED)
                 / GlobalVars.STEP_MAX_SPEED);
+        layout.addView(sb);
+
+        final TextView yellowLabel = new TextView(this);
+        yellowLabel.setTextSize(18f);
+        yellowLabel.setPadding(0, pad, 0, pad / 2);
+        layout.addView(yellowLabel);
+        SeekBar yellowBar = new SeekBar(this);
+        yellowBar.setMax(GlobalVars.MAX_SPEED);
+        yellowBar.setProgress(Math.max(1, Math.min(GlobalVars.SWarn, GlobalVars.MAX_SPEED - 1)));
+        layout.addView(yellowBar);
+
+        final TextView redLabel = new TextView(this);
+        redLabel.setTextSize(18f);
+        redLabel.setPadding(0, pad, 0, pad / 2);
+        layout.addView(redLabel);
+        SeekBar redBar = new SeekBar(this);
+        redBar.setMax(GlobalVars.MAX_SPEED);
+        redBar.setProgress(Math.max(yellowBar.getProgress() + 1,
+                Math.min(GlobalVars.SMax, GlobalVars.MAX_SPEED)));
+        layout.addView(redBar);
+
+        Runnable updateLabels = () -> {
+            label.setText("Максимум шкалы: " + (GlobalVars.MIN_MAX_SPEED
+                    + sb.getProgress() * GlobalVars.STEP_MAX_SPEED) + " км/ч");
+            yellowLabel.setText("Жёлтый цвет с " + yellowBar.getProgress() + " км/ч");
+            redLabel.setText("Красный цвет с " + redBar.getProgress() + " км/ч");
+        };
         sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
-                int val = GlobalVars.MIN_MAX_SPEED + p * GlobalVars.STEP_MAX_SPEED;
-                label.setText(val + " км/ч");
+                if (!fromUser) return;
+                int max = GlobalVars.MIN_MAX_SPEED + p * GlobalVars.STEP_MAX_SPEED;
+                yellowBar.setMax(max);
+                redBar.setMax(max);
+                yellowBar.setProgress(Math.max(1, Math.min(yellowBar.getProgress(), max - 1)));
+                redBar.setProgress(Math.max(yellowBar.getProgress() + 1,
+                        Math.min(redBar.getProgress(), max)));
+                updateLabels.run();
             }
             @Override public void onStartTrackingTouch(SeekBar s) {}
             @Override public void onStopTrackingTouch(SeekBar s) {}
         });
-        layout.addView(sb);
 
+        yellowBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                if (!fromUser) return;
+                int yellow = Math.max(1, Math.min(p, yellowBar.getMax() - 1));
+                yellowBar.setProgress(yellow);
+                if (redBar.getProgress() <= yellow) redBar.setProgress(yellow + 1);
+                updateLabels.run();
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) {}
+            @Override public void onStopTrackingTouch(SeekBar s) {}
+        });
+
+        redBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                if (!fromUser) return;
+                int red = Math.max(2, Math.min(p, redBar.getMax()));
+                redBar.setProgress(red);
+                if (yellowBar.getProgress() >= red) yellowBar.setProgress(red - 1);
+                updateLabels.run();
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) {}
+            @Override public void onStopTrackingTouch(SeekBar s) {}
+        });
+        updateLabels.run();
+
+        // --- Переключатель нелинейности ---
+        final SwitchCompat sw = new SwitchCompat(this);
+        sw.setText("Нелинейная шкала");
+        sw.setChecked(GlobalVars.NONLINEAR);
+        int switchTopPad = (int) (16 * density);
+        sw.setPadding(0, switchTopPad, 0, 0);
+        layout.addView(sw);
+
+        // --- Диалог ---
         new AlertDialog.Builder(this)
-                .setTitle("Максимальная скорость")
-                .setView(layout)
+                .setTitle("Настройки шкалы")
+                .setView(scrollView)
                 .setPositiveButton("ОК", (d, w) -> {
                     int val = GlobalVars.MIN_MAX_SPEED
                             + sb.getProgress() * GlobalVars.STEP_MAX_SPEED;
-                    applyMaxSpeed(val);
+                    applyScaleSettings(val, yellowBar.getProgress(), redBar.getProgress(), sw.isChecked());
                 })
                 .setNegativeButton("Отмена", null)
                 .show();
     }
 
-    private void applyMaxSpeed(int newMax) {
+    /** Применить максимум шкалы, цветовые пороги и режим линейности. */
+    private void applyScaleSettings(int newMax, int yellowSpeed, int redSpeed, boolean nonlinear) {
         GlobalVars.MAX_SPEED = newMax;
-
-        // Пороги SWarn/SMax — пропорционально новому максимуму.
-        // При MAX=160 даёт ровно 74 и 80, как было.
-        GlobalVars.SWarn = Math.round(newMax * (74f / 160f));
-        GlobalVars.SMax  = Math.round(newMax * (80f / 160f));
+        GlobalVars.NONLINEAR = nonlinear;
+        GlobalVars.SWarn = yellowSpeed;
+        GlobalVars.SMax = redSpeed;
 
         getSharedPreferences(GlobalVars.PREFS_NAME, MODE_PRIVATE)
                 .edit()
                 .putInt(GlobalVars.KEY_MAX_SPEED, GlobalVars.MAX_SPEED)
                 .putInt(GlobalVars.KEY_SWARN,     GlobalVars.SWarn)
                 .putInt(GlobalVars.KEY_SMAX,      GlobalVars.SMax)
+                .putBoolean(GlobalVars.KEY_NONLINEAR, nonlinear)
                 .apply();
 
         circleView.setMaxSpeed(newMax);
-        circleView.setProgress(newMax);          // перерисовка дуги под новый максимум
-        circleView.invalidate();
+        circleView.setNonlinear(nonlinear);
+        circleView.setProgress(newMax);
+        circleView.setProgressPointPosition(GlobalVars.MyTimer);
+        bigtextView.invalidate();
     }
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -101,11 +173,17 @@ public class MainActivity extends AppCompatActivity {
         circleView = findViewById(R.id.circleView);
         // --- Восстанавливаем настройки из SharedPreferences ---
         SharedPreferences prefs = getSharedPreferences(GlobalVars.PREFS_NAME, MODE_PRIVATE);
-        GlobalVars.MAX_SPEED = prefs.getInt(GlobalVars.KEY_MAX_SPEED,
-                GlobalVars.DEFAULT_MAX_SPEED);
-        GlobalVars.SWarn = prefs.getInt(GlobalVars.KEY_SWARN, GlobalVars.SWarn);
-        GlobalVars.SMax  = prefs.getInt(GlobalVars.KEY_SMAX,  GlobalVars.SMax);
+        GlobalVars.MAX_SPEED = Math.max(GlobalVars.MIN_MAX_SPEED,
+                Math.min(prefs.getInt(GlobalVars.KEY_MAX_SPEED, GlobalVars.DEFAULT_MAX_SPEED),
+                        GlobalVars.MAX_MAX_SPEED));
+        GlobalVars.SWarn = Math.max(1,
+                Math.min(prefs.getInt(GlobalVars.KEY_SWARN, GlobalVars.SWarn), GlobalVars.MAX_SPEED - 1));
+        GlobalVars.SMax = Math.max(GlobalVars.SWarn + 1,
+                Math.min(prefs.getInt(GlobalVars.KEY_SMAX, GlobalVars.SMax), GlobalVars.MAX_SPEED));
+        GlobalVars.NONLINEAR = prefs.getBoolean(GlobalVars.KEY_NONLINEAR, true);
+
         circleView.setMaxSpeed(GlobalVars.MAX_SPEED);
+        circleView.setNonlinear(GlobalVars.NONLINEAR);
 
 // Долгое нажатие на циферблат открывает настройку
         circleView.setOnLongClickListener(v -> {
@@ -190,6 +268,3 @@ public class MainActivity extends AppCompatActivity {
         animator.start();
     }
 }
-
-
-

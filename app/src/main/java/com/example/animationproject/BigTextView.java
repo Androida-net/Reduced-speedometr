@@ -80,7 +80,7 @@ public class BigTextView extends View {
         // Цвет в зависимости от скорости
         if (GlobalVars.MyTimer >= GlobalVars.SWarn && GlobalVars.MyTimer < GlobalVars.SMax) {
             bigtextPaint.setColor(Color.YELLOW);
-        } else if (GlobalVars.MyTimer > GlobalVars.SMax) {
+        } else if (GlobalVars.MyTimer >= GlobalVars.SMax) {
             bigtextPaint.setColor(Color.RED);
         } else {
             bigtextPaint.setColor(Color.GREEN);

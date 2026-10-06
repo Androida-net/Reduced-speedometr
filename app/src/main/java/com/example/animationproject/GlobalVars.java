@@ -21,4 +21,8 @@ public class GlobalVars {
 
     /** Текущий максимум шкалы (км/ч). */
     public static int MAX_SPEED = DEFAULT_MAX_SPEED;
+    public static final String KEY_NONLINEAR = "nonlinear";
+
+    /** true — нелинейная шкала (подробнее в средней зоне), false — линейная. */
+    public static boolean NONLINEAR = true;
 }

@@ -5,6 +5,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.Typeface;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.AttributeSet;
@@ -23,12 +24,42 @@ public class CircleView extends View {
     // ---------- Данные шкалы ----------
 
     /** Базовые метки для MAX_SPEED = 160. При другом максимуме масштабируются пропорционально. */
-    private static final int[] BASE_MARKERS = {0, 20, 40, 50, 60, 65, 70, 75, 80, 85, 90, 100, 120, 140, 160};
+
     private static final int BASE_MAX = 160;
 
+    /** Набор для нелинейного режима: сгущение в зоне 60–90. */
+    private static final int[] BASE_MARKERS_NL =
+            {0, 20, 40, 60, 65, 70, 75, 80, 85, 90, 100, 120, 140, 160};
+
+    /** Набор для линейного режима: только круглые значения с равным шагом. */
+    private static final int[] BASE_MARKERS_LIN =
+            {0, 20, 40, 60, 80, 100, 120, 140, 160};
+
     /** Текущие метки (пересобираются в setMaxSpeed). */
-    private int[] speedMarkers = BASE_MARKERS.clone();
-    private final int[] scalePlus    = {140, 140, 160, 185, 210, 240, 255, 275, 290, 305, 300, 275, 254, 240, 240};
+    private int[] speedMarkers = BASE_MARKERS_NL.clone();
+
+    // ============================================================
+    //  НЕЛИНЕЙНАЯ ШКАЛА (кусочно-линейное отображение скорость → угол)
+    // ============================================================
+    //  Средняя треть дуги отводится диапазону 0.375…0.5625 от MAX_SPEED
+    //  (для MAX_SPEED = 160 это 60…90 км/ч) — получается 2× подробнее,
+    //  чем в первой и последней трети.
+    //
+    //  Чтобы сдвинуть «интересную зону», меняй дроби в SPEED_FRACTIONS:
+    //    0.30 / 0.55 — подробно с 48 до 88 км/ч при MAX_SPEED = 160
+    //    0.45 / 0.70 — подробно с 72 до 112 км/ч
+    // ============================================================
+
+    // --- Набор для нелинейной шкалы ---
+    private static final float[] SPEED_FRACTIONS_NL = {0f, 0.375f, 0.5625f, 1f};
+    private static final float[] ANGLE_FRACTIONS_NL = {0f, 1f / 3f, 2f / 3f, 1f};
+
+    // --- Набор для линейной шкалы (одна прямая 0..MAX) ---
+    private static final float[] SPEED_FRACTIONS_LIN = {0f, 1f};
+    private static final float[] ANGLE_FRACTIONS_LIN = {0f, 1f};
+
+    /** Текущий режим шкалы. Управляется из Activity через setNonlinear(). */
+    private boolean nonlinear = true;
 
     // ---------- Состояние ----------
     private float progress = 0f;
@@ -51,9 +82,9 @@ public class CircleView extends View {
     private static final float START_ANGLE = 150f;
     private static final float SWEEP_ANGLE = 240f;
 
-    // ---------- Константы геометрии (общие для onMeasure и recomputeGeometry) ----------
-    private static final float NUMBER_OFFSET = 50f;   // цифра на radius + 50
-    private static final float NUMBER_SIZE   = 52f;   // Размер цифр на шкале спидометра
+    // ---------- Константы геометрии ----------
+    private static final float NUMBER_OFFSET = 50f;
+    private static final float NUMBER_SIZE   = 54f;
     private static final float MARGIN        = NUMBER_OFFSET + NUMBER_SIZE;
 
     // ---------- Конструкторы ----------
@@ -83,7 +114,8 @@ public class CircleView extends View {
         markerPaint.setAntiAlias(true);
 
         textPaint.setColor(Color.WHITE);
-        textPaint.setTextSize(52);                          // Размер цифр на шкале спидометра
+        textPaint.setTextSize(NUMBER_SIZE);
+        textPaint.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         textPaint.setTextAlign(Paint.Align.CENTER);
         textPaint.setAntiAlias(true);
 
@@ -91,7 +123,6 @@ public class CircleView extends View {
         needlePaint.setStyle(Paint.Style.FILL_AND_STROKE);
         needlePaint.setAntiAlias(true);
 
-        // --- Базовый отступ (без insets — они теперь на корневом FrameLayout) ---
         final float density = getResources().getDisplayMetrics().density;
         final int basePad = (int) (8 * density);
         setPadding(basePad, basePad, basePad, basePad);
@@ -99,13 +130,6 @@ public class CircleView extends View {
         refreshRunnable = new Runnable() {
             @Override
             public void run() {
-                if (GlobalVars.MyTimer < GlobalVars.SWarn) {
-                    circlePaint.setColor(Color.GREEN);
-                } else if (GlobalVars.MyTimer < GlobalVars.SMax) {
-                    circlePaint.setColor(Color.YELLOW);
-                } else {
-                    circlePaint.setColor(Color.RED);
-                }
                 setProgressPointPosition(GlobalVars.MyTimer);
                 handler.postDelayed(this, REFRESH_INTERVAL);
             }
@@ -113,7 +137,36 @@ public class CircleView extends View {
     }
 
     // ============================================================
-    //  onMeasure — сообщаем wrap_content реальную высоту циферблата
+    //  Кусочно-линейное отображение: скорость → угол (от START_ANGLE)
+    // ============================================================
+    /**
+     * @param speed значение в км/ч
+     * @return угловое смещение от START_ANGLE, в градусах (0..SWEEP_ANGLE)
+     */
+    private float speedToAngleOffset(float speed) {
+        float maxSpeed = GlobalVars.MAX_SPEED;
+        if (maxSpeed <= 0f) return 0f;
+        if (speed <= 0f)        return 0f;
+        if (speed >= maxSpeed)  return SWEEP_ANGLE;
+
+        float[] speedFractions = nonlinear ? SPEED_FRACTIONS_NL : SPEED_FRACTIONS_LIN;
+        float[] angleFractions = nonlinear ? ANGLE_FRACTIONS_NL : ANGLE_FRACTIONS_LIN;
+
+        for (int i = 0; i < speedFractions.length - 1; i++) {
+            float sLo = speedFractions[i]     * maxSpeed;
+            float sHi = speedFractions[i + 1] * maxSpeed;
+            if (speed <= sHi) {
+                float aLo = angleFractions[i]     * SWEEP_ANGLE;
+                float aHi = angleFractions[i + 1] * SWEEP_ANGLE;
+                if (sHi <= sLo) return aLo;
+                return aLo + (aHi - aLo) * (speed - sLo) / (sHi - sLo);
+            }
+        }
+        return SWEEP_ANGLE;
+    }
+
+    // ============================================================
+    //  onMeasure
     // ============================================================
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
@@ -122,18 +175,15 @@ public class CircleView extends View {
         int height = MeasureSpec.getSize(heightMeasureSpec);
         int hMode  = MeasureSpec.getMode(heightMeasureSpec);
 
-        // Если ширина не задана явно — считать нечего, отдаём решение родителю
         if (wMode != MeasureSpec.EXACTLY) {
             super.onMeasure(widthMeasureSpec, heightMeasureSpec);
             return;
         }
 
-        // Радиус, ограниченный шириной — та же формула, что в recomputeGeometry()
         float availW = width - getPaddingLeft() - getPaddingRight();
         float r = (availW - 2f * MARGIN) / 1.732f;
         if (r < 0f) r = 0f;
 
-        // Высота, нужная циферблату: 1.5r (вертикальный габарит сектора) + 2*margin под цифры
         int desiredHeight = (int) (1.5f * r + 2f * MARGIN
                 + getPaddingTop() + getPaddingBottom());
 
@@ -142,8 +192,6 @@ public class CircleView extends View {
         } else if (hMode == MeasureSpec.UNSPECIFIED) {
             height = desiredHeight;
         }
-        // hMode == EXACTLY — уважаем то, что просил родитель
-
         setMeasuredDimension(width, height);
     }
 
@@ -177,8 +225,7 @@ public class CircleView extends View {
         float maxRbyWarc = (availW - 2f * MARGIN) / 1.732f;
         float maxRbyWnum = availW / 2f - MARGIN;
         float maxRbyW    = Math.min(maxRbyWarc, maxRbyWnum);
-
-        float maxRbyH = (availH - 2f * MARGIN) / 1.5f;
+        float maxRbyH    = (availH - 2f * MARGIN) / 1.5f;
 
         radius = Math.min(maxRbyW, maxRbyH);
         if (radius < 10f) radius = 10f;
@@ -187,6 +234,9 @@ public class CircleView extends View {
         centerY = getPaddingTop() + availH / 2f + 0.25f * radius;
     }
 
+    // ============================================================
+    //  Публичный API
+    // ============================================================
     public void setTextColor(int colorNum, int ColorCir) {
         circlePaint.setColor(ColorCir);
         textPaint.setColor(colorNum);
@@ -201,32 +251,59 @@ public class CircleView extends View {
 
     public void setProgressPointPosition(float PointPosition) {
         this.PointPosition = Math.min(PointPosition, speedMarkers[speedMarkers.length - 1]);
+        if (GlobalVars.MyTimer < GlobalVars.SWarn) {
+            circlePaint.setColor(Color.GREEN);
+        } else if (GlobalVars.MyTimer < GlobalVars.SMax) {
+            circlePaint.setColor(Color.YELLOW);
+        } else {
+            circlePaint.setColor(Color.RED);
+        }
         invalidate();
     }
-    // ============================================================
-    //  Настройка максимума шкалы
-    // ============================================================
+
     /**
      * Задать максимальную скорость шкалы.
-     * Метки масштабируются пропорционально, scalePlus остаётся рабочим.
+     * Метки масштабируются пропорционально; границы «подробной» зоны тоже.
      */
     public void setMaxSpeed(int newMax) {
         newMax = Math.max(GlobalVars.MIN_MAX_SPEED,
                 Math.min(GlobalVars.MAX_MAX_SPEED, newMax));
         GlobalVars.MAX_SPEED = newMax;
 
-        int[] scaled = new int[BASE_MARKERS.length];
-        for (int i = 0; i < BASE_MARKERS.length; i++) {
-            scaled[i] = Math.round(BASE_MARKERS[i] * (float) newMax / BASE_MAX);
-        }
-        // Последняя метка всегда точно равна newMax
-        scaled[scaled.length - 1] = newMax;
-        speedMarkers = scaled;
-        // не даём стрелке и дуге выйти за новый максимум
+        rebuildMarkers();
+
         if (PointPosition > newMax) PointPosition = newMax;
         if (progress     > newMax) progress     = newMax;
         invalidate();
     }
+    /** Пересобирает speedMarkers под текущие nonlinear + GlobalVars.MAX_SPEED. */
+    private void rebuildMarkers() {
+        int[] base = nonlinear ? BASE_MARKERS_NL : BASE_MARKERS_LIN;
+        int newMax = GlobalVars.MAX_SPEED;
+        if (newMax <= 0) newMax = BASE_MAX;
+
+        int[] scaled = new int[base.length];
+        for (int i = 0; i < base.length; i++) {
+            scaled[i] = Math.round(base[i] * (float) newMax / BASE_MAX);
+        }
+        scaled[scaled.length - 1] = newMax;
+        speedMarkers = scaled;
+    }
+    /**
+     * Включить/выключить нелинейную шкалу.
+     * Пересобирает набор меток под выбранный режим и перерисовывает циферблат.
+     */
+    public void setNonlinear(boolean nonlinear) {
+        this.nonlinear = nonlinear;
+        GlobalVars.NONLINEAR = nonlinear;
+        rebuildMarkers();
+        invalidate();
+    }
+
+
+    // ============================================================
+    //  Отрисовка
+    // ============================================================
     @Override
     protected void onDraw(@NonNull Canvas canvas) {
         super.onDraw(canvas);
@@ -234,9 +311,10 @@ public class CircleView extends View {
         if (radius <= 0f) return;
 
         if (shouldDrawAllElements) {
-            // а) Засечки и цифры
+            // ----- а) Засечки и цифры (нелинейно по speedToAngleOffset) -----
             for (int i = 0; i < speedMarkers.length; i++) {
-                float angle = START_ANGLE + (SWEEP_ANGLE * i / (speedMarkers.length - 1));
+                float angleOffset = speedToAngleOffset(speedMarkers[i]);
+                float angle = START_ANGLE + angleOffset;
                 float cosA = (float) Math.cos(Math.toRadians(angle));
                 float sinA = (float) Math.sin(Math.toRadians(angle));
 
@@ -244,7 +322,7 @@ public class CircleView extends View {
                 float startY = centerY + radius * sinA;
 
                 float stopX, stopY;
-                if (i % 2 == 0) {
+                if (i % 2 == 0 || i == speedMarkers.length - 1)  {
                     stopX = centerX + (radius - 80f) * cosA;
                     stopY = centerY + (radius - 80f) * sinA;
                 } else {
@@ -253,23 +331,17 @@ public class CircleView extends View {
                 }
                 canvas.drawLine(startX, startY, stopX, stopY, markerPaint);
 
-                if (i % 2 == 0) {
-                    float textX = centerX + (radius + 50f) * cosA;
-                    float textY = centerY + (radius + 50f) * sinA;
+                if (!nonlinear || i % 2 == 0 || i == speedMarkers.length - 1) {
+                    float textX = centerX + (radius + NUMBER_OFFSET) * cosA;
+                    float textY = centerY + (radius + NUMBER_OFFSET) * sinA;
                     canvas.drawText(String.valueOf(speedMarkers[i]), textX, textY + 15f, textPaint);
                 }
             }
 
-            // б) Стрелка
-            float maxValue = speedMarkers[speedMarkers.length - 1];
-            float needleAngle = START_ANGLE + (SWEEP_ANGLE * PointPosition / maxValue);
-            for (int i = 0; i < speedMarkers.length; i++) {
-                if (GlobalVars.MyTimer > speedMarkers[i]) {
-                    needleAngle = START_ANGLE + (scalePlus[i] * PointPosition / maxValue);
-                }
-            }
-
+            // ----- б) Стрелка (тот же кусочно-линейный маппинг) -----
+            float needleAngle = START_ANGLE + speedToAngleOffset(PointPosition);
             float needleLength = radius - 10f;
+
             Path needlePath = new Path();
             needlePath.moveTo(centerX, centerY);
             needlePath.lineTo(
@@ -291,13 +363,12 @@ public class CircleView extends View {
             needlePaint.setStrokeWidth(3f);
             canvas.drawPath(needlePath, needlePaint);
 
-            // в) Центральный кружок
+            // ----- в) Центральный кружок -----
             canvas.drawCircle(centerX, centerY, 25f, needlePaint);
         }
 
-        // Дуга прогресса
-        float maxValue = speedMarkers[speedMarkers.length - 1];
-        float sweep = SWEEP_ANGLE * progress / maxValue;
+        // ----- Дуга прогресса (тот же маппинг) -----
+        float sweep = speedToAngleOffset(progress);
         canvas.drawArc(
                 centerX - radius,
                 centerY - radius,
