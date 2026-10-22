@@ -1,4 +1,12 @@
 <resources>
     <string name="app_name">NLSMeter</string>
-    <string name="scale_settings">Настройки шкалы</string>
+    <string name="scale_settings">Scale settings</string>
+    <string name="scale_maximum">Scale maximum: %1$d km/h</string>
+    <string name="yellow_from">Yellow from %1$d km/h</string>
+    <string name="red_from">Red from %1$d km/h</string>
+    <string name="center_scale_factor">Center scale factor (1 = linear)</string>
+    <string name="action_ok">OK</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="go">GO!</string>
+    <string name="work_time_gps">Work time: %1$s GPS: %2$s°, %3$s°</string>
 </resources>

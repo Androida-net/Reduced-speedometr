@@ -8,6 +8,8 @@ import android.os.Handler;
 import android.util.AttributeSet;
 import android.view.View;
 
+import java.util.Locale;
+
 public class NumberView extends View {
     private int currentNumber = 0;
     private final Paint textPaint = new Paint();
@@ -64,7 +66,6 @@ public class NumberView extends View {
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         String TimerText=":";                                                       // отделитель секунд от минут
-        String GPSText="";
         if ((currentNumber % 3600) % 60 < 10 ){
             TimerText = TimerText + "0";                                            // добавление ведущего нуля у секунд
         }
@@ -77,12 +78,12 @@ public class NumberView extends View {
         if (currentNumber / 3600 < 10) {
             TimerText = "0" + TimerText;
         }
-        GPSText = " GPS:" + String.format("%.4f",  GlobalVars.currentLatitude) + "º, ";
-        GPSText = GPSText + String.format("%.4f",  GlobalVars.currentLongitude) + "º";
+        String latitude = String.format(Locale.US, "%.4f", GlobalVars.currentLatitude);
+        String longitude = String.format(Locale.US, "%.4f", GlobalVars.currentLongitude);
         int width = getWidth();                                                    // Получаем размеры View
         int height = getHeight();
         canvas.drawText(                                                            // Рисуем число в центре экрана
-                "Work time: " + TimerText + GPSText,
+                getResources().getString(R.string.work_time_gps, TimerText, latitude, longitude),
                 width,
                 height,
                 textPaint

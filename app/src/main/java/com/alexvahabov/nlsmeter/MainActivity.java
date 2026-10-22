@@ -33,6 +33,7 @@ public class MainActivity extends AppCompatActivity {
     private CircleView circleView;
     private GpsTracker gpsTracker;
     private BigTextView bigtextView;
+    private boolean isStarted;
 
     private void showMaxSpeedDialog() {
         final int steps = (GlobalVars.MAX_MAX_SPEED - GlobalVars.MIN_MAX_SPEED)
@@ -79,12 +80,12 @@ public class MainActivity extends AppCompatActivity {
         layout.addView(redBar);
 
         Runnable updateLabels = () -> {
-            label.setText("Максимум шкалы: " + (GlobalVars.MIN_MAX_SPEED
-                    + sb.getProgress() * GlobalVars.STEP_MAX_SPEED) + " км/ч");
-            yellowLabel.setText("Жёлтый цвет с "
-                    + SpeedThresholds.speed(yellowBar.getProgress()) + " км/ч");
-            redLabel.setText("Красный цвет с "
-                    + SpeedThresholds.speed(redBar.getProgress()) + " км/ч");
+            label.setText(getString(R.string.scale_maximum, GlobalVars.MIN_MAX_SPEED
+                    + sb.getProgress() * GlobalVars.STEP_MAX_SPEED));
+            yellowLabel.setText(getString(R.string.yellow_from,
+                    SpeedThresholds.speed(yellowBar.getProgress())));
+            redLabel.setText(getString(R.string.red_from,
+                    SpeedThresholds.speed(redBar.getProgress())));
         };
         sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
@@ -131,7 +132,7 @@ public class MainActivity extends AppCompatActivity {
 
         // --- Коэффициент растяжения центральной зоны ---
         TextView factorLabel = new TextView(this);
-        factorLabel.setText("Коэффициент шкалы в центре (1 — линейная)");
+        factorLabel.setText(R.string.center_scale_factor);
         factorLabel.setTextSize(18f);
         factorLabel.setPadding(0, pad, 0, pad / 2);
         layout.addView(factorLabel);
@@ -151,9 +152,9 @@ public class MainActivity extends AppCompatActivity {
 
         // --- Диалог ---
         new AlertDialog.Builder(this)
-                .setTitle("Настройки шкалы")
+                .setTitle(R.string.scale_settings)
                 .setView(scrollView)
-                .setPositiveButton("ОК", (d, w) -> {
+                .setPositiveButton(R.string.action_ok, (d, w) -> {
                     int val = GlobalVars.MIN_MAX_SPEED
                             + sb.getProgress() * GlobalVars.STEP_MAX_SPEED;
                     applyScaleSettings(val,
@@ -161,7 +162,7 @@ public class MainActivity extends AppCompatActivity {
                             SpeedThresholds.speed(redBar.getProgress()),
                             GlobalVars.SCALE_FACTORS[factorSpinner.getSelectedItemPosition()]);
                 })
-                .setNegativeButton("Отмена", null)
+                .setNegativeButton(R.string.action_cancel, null)
                 .show();
     }
 
@@ -222,22 +223,33 @@ public class MainActivity extends AppCompatActivity {
 
         // Проверка и запрос разрешений к GPS
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, 1);
+            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION}, 1);
         }
         gpsTracker = new GpsTracker(this);
-        gpsTracker.startTracking();
         startTextAnimation();                                       // Запуск заставки (анимации "Go")
     }
     @Override
-    protected void onDestroy() {
-        super.onDestroy();
+    protected void onStart() {
+        super.onStart();
+        isStarted = true;
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            gpsTracker.startTracking();
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        isStarted = false;
         gpsTracker.stopTracking();
+        super.onStop();
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == 1 && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+        if (requestCode == 1 && isStarted
+                && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             gpsTracker.startTracking();
         }
     }
