@@ -1,10 +1,11 @@
-package com.example.animationproject;
+package com.alexvahabov.nlsmeter;
 
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.os.Handler;
 import android.os.Looper;
@@ -14,6 +15,10 @@ import android.view.View;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.TreeSet;
+
 public class CircleView extends View {
 
     // ---------- Геометрия (считается в onSizeChanged) ----------
@@ -21,45 +26,9 @@ public class CircleView extends View {
     private float centerY;
     private float radius;
 
-    // ---------- Данные шкалы ----------
-
-    /** Базовые метки для MAX_SPEED = 160. При другом максимуме масштабируются пропорционально. */
-
-    private static final int BASE_MAX = 160;
-
-    /** Набор для нелинейного режима: сгущение в зоне 60–90. */
-    private static final int[] BASE_MARKERS_NL =
-            {0, 20, 40, 60, 65, 70, 75, 80, 85, 90, 100, 120, 140, 160};
-
-    /** Набор для линейного режима: только круглые значения с равным шагом. */
-    private static final int[] BASE_MARKERS_LIN =
-            {0, 20, 40, 60, 80, 100, 120, 140, 160};
-
-    /** Текущие метки (пересобираются в setMaxSpeed). */
-    private int[] speedMarkers = BASE_MARKERS_NL.clone();
-
-    // ============================================================
-    //  НЕЛИНЕЙНАЯ ШКАЛА (кусочно-линейное отображение скорость → угол)
-    // ============================================================
-    //  Средняя треть дуги отводится диапазону 0.375…0.5625 от MAX_SPEED
-    //  (для MAX_SPEED = 160 это 60…90 км/ч) — получается 2× подробнее,
-    //  чем в первой и последней трети.
-    //
-    //  Чтобы сдвинуть «интересную зону», меняй дроби в SPEED_FRACTIONS:
-    //    0.30 / 0.55 — подробно с 48 до 88 км/ч при MAX_SPEED = 160
-    //    0.45 / 0.70 — подробно с 72 до 112 км/ч
-    // ============================================================
-
-    // --- Набор для нелинейной шкалы ---
-    private static final float[] SPEED_FRACTIONS_NL = {0f, 0.375f, 0.5625f, 1f};
-    private static final float[] ANGLE_FRACTIONS_NL = {0f, 1f / 3f, 2f / 3f, 1f};
-
-    // --- Набор для линейной шкалы (одна прямая 0..MAX) ---
-    private static final float[] SPEED_FRACTIONS_LIN = {0f, 1f};
-    private static final float[] ANGLE_FRACTIONS_LIN = {0f, 1f};
-
-    /** Текущий режим шкалы. Управляется из Activity через setNonlinear(). */
-    private boolean nonlinear = true;
+    // Центральная зона 60–100 из 160 масштабируется вместе с максимумом.
+    private int scaleFactor = GlobalVars.DEFAULT_SCALE_FACTOR;
+    private List<Integer> speedLabels = SpeedScale.labelSpeeds(GlobalVars.MAX_SPEED, scaleFactor);
 
     // ---------- Состояние ----------
     private float progress = 0f;
@@ -80,11 +49,11 @@ public class CircleView extends View {
 
     // ---------- Константы шкалы ----------
     private static final float START_ANGLE = 150f;
-    private static final float SWEEP_ANGLE = 240f;
 
     // ---------- Константы геометрии ----------
     private static final float NUMBER_OFFSET = 50f;
     private static final float NUMBER_SIZE   = 54f;
+    private static final float MIN_NUMBER_SIZE = 12f;
     private static final float MARGIN        = NUMBER_OFFSET + NUMBER_SIZE;
 
     // ---------- Конструкторы ----------
@@ -136,33 +105,8 @@ public class CircleView extends View {
         };
     }
 
-    // ============================================================
-    //  Кусочно-линейное отображение: скорость → угол (от START_ANGLE)
-    // ============================================================
-    /**
-     * @param speed значение в км/ч
-     * @return угловое смещение от START_ANGLE, в градусах (0..SWEEP_ANGLE)
-     */
     private float speedToAngleOffset(float speed) {
-        float maxSpeed = GlobalVars.MAX_SPEED;
-        if (maxSpeed <= 0f) return 0f;
-        if (speed <= 0f)        return 0f;
-        if (speed >= maxSpeed)  return SWEEP_ANGLE;
-
-        float[] speedFractions = nonlinear ? SPEED_FRACTIONS_NL : SPEED_FRACTIONS_LIN;
-        float[] angleFractions = nonlinear ? ANGLE_FRACTIONS_NL : ANGLE_FRACTIONS_LIN;
-
-        for (int i = 0; i < speedFractions.length - 1; i++) {
-            float sLo = speedFractions[i]     * maxSpeed;
-            float sHi = speedFractions[i + 1] * maxSpeed;
-            if (speed <= sHi) {
-                float aLo = angleFractions[i]     * SWEEP_ANGLE;
-                float aHi = angleFractions[i + 1] * SWEEP_ANGLE;
-                if (sHi <= sLo) return aLo;
-                return aLo + (aHi - aLo) * (speed - sLo) / (sHi - sLo);
-            }
-        }
-        return SWEEP_ANGLE;
+        return SpeedScale.angleOffset(speed, GlobalVars.MAX_SPEED, scaleFactor);
     }
 
     // ============================================================
@@ -245,12 +189,12 @@ public class CircleView extends View {
     }
 
     public void setProgress(float progress) {
-        this.progress = Math.min(progress, speedMarkers[speedMarkers.length - 1]);
+        this.progress = Math.min(progress, GlobalVars.MAX_SPEED);
         invalidate();
     }
 
     public void setProgressPointPosition(float PointPosition) {
-        this.PointPosition = Math.min(PointPosition, speedMarkers[speedMarkers.length - 1]);
+        this.PointPosition = Math.min(PointPosition, GlobalVars.MAX_SPEED);
         if (GlobalVars.MyTimer < GlobalVars.SWarn) {
             circlePaint.setColor(Color.GREEN);
         } else if (GlobalVars.MyTimer < GlobalVars.SMax) {
@@ -263,41 +207,58 @@ public class CircleView extends View {
 
     /**
      * Задать максимальную скорость шкалы.
-     * Метки масштабируются пропорционально; границы «подробной» зоны тоже.
+     * Границы «подробной» зоны масштабируются пропорционально.
      */
     public void setMaxSpeed(int newMax) {
         newMax = Math.max(GlobalVars.MIN_MAX_SPEED,
                 Math.min(GlobalVars.MAX_MAX_SPEED, newMax));
         GlobalVars.MAX_SPEED = newMax;
-
-        rebuildMarkers();
+        speedLabels = SpeedScale.labelSpeeds(newMax, scaleFactor);
 
         if (PointPosition > newMax) PointPosition = newMax;
         if (progress     > newMax) progress     = newMax;
         invalidate();
     }
-    /** Пересобирает speedMarkers под текущие nonlinear + GlobalVars.MAX_SPEED. */
-    private void rebuildMarkers() {
-        int[] base = nonlinear ? BASE_MARKERS_NL : BASE_MARKERS_LIN;
-        int newMax = GlobalVars.MAX_SPEED;
-        if (newMax <= 0) newMax = BASE_MAX;
-
-        int[] scaled = new int[base.length];
-        for (int i = 0; i < base.length; i++) {
-            scaled[i] = Math.round(base[i] * (float) newMax / BASE_MAX);
-        }
-        scaled[scaled.length - 1] = newMax;
-        speedMarkers = scaled;
-    }
-    /**
-     * Включить/выключить нелинейную шкалу.
-     * Пересобирает набор меток под выбранный режим и перерисовывает циферблат.
-     */
-    public void setNonlinear(boolean nonlinear) {
-        this.nonlinear = nonlinear;
-        GlobalVars.NONLINEAR = nonlinear;
-        rebuildMarkers();
+    /** 1 — линейная шкала; остальные значения увеличивают масштаб центральной зоны. */
+    public void setScaleFactor(int factor) {
+        scaleFactor = SpeedScale.validFactor(factor);
+        GlobalVars.SCALE_FACTOR = scaleFactor;
+        speedLabels = SpeedScale.labelSpeeds(GlobalVars.MAX_SPEED, scaleFactor);
         invalidate();
+    }
+
+    private RectF labelBounds(int speed, Paint.FontMetrics metrics) {
+        float angle = START_ANGLE + speedToAngleOffset(speed);
+        float x = centerX + (radius + NUMBER_OFFSET)
+                * (float) Math.cos(Math.toRadians(angle));
+        float baseline = centerY + (radius + NUMBER_OFFSET)
+                * (float) Math.sin(Math.toRadians(angle))
+                - (metrics.ascent + metrics.descent) / 2f;
+        float halfWidth = textPaint.measureText(String.valueOf(speed)) / 2f;
+        return new RectF(x - halfWidth - 2f, baseline + metrics.ascent - 2f,
+                x + halfWidth + 2f, baseline + metrics.descent + 2f);
+    }
+
+    /** Подгоняет размер цифр под девять подписей, не меняя их выбранные скорости. */
+    private void fitLabelText(List<Integer> labels) {
+        for (float size = NUMBER_SIZE; size >= MIN_NUMBER_SIZE; size -= 2f) {
+            textPaint.setTextSize(size);
+            Paint.FontMetrics metrics = textPaint.getFontMetrics();
+            List<RectF> occupied = new ArrayList<>();
+            boolean overlaps = false;
+            for (int speed : labels) {
+                RectF bounds = labelBounds(speed, metrics);
+                for (RectF other : occupied) {
+                    if (RectF.intersects(bounds, other)) {
+                        overlaps = true;
+                        break;
+                    }
+                }
+                if (overlaps) break;
+                occupied.add(bounds);
+            }
+            if (!overlaps) return;
+        }
     }
 
 
@@ -311,9 +272,16 @@ public class CircleView extends View {
         if (radius <= 0f) return;
 
         if (shouldDrawAllElements) {
-            // ----- а) Засечки и цифры (нелинейно по speedToAngleOffset) -----
-            for (int i = 0; i < speedMarkers.length; i++) {
-                float angleOffset = speedToAngleOffset(speedMarkers[i]);
+            // Круглые значения через 5 км/ч; в сжатых областях убираем тесные засечки.
+            float minAngleGap = (float) Math.toDegrees(16f / radius);
+            List<Integer> labels = speedLabels;
+            fitLabelText(labels);
+            TreeSet<Integer> ticks = new TreeSet<>(SpeedScale.tickSpeeds(GlobalVars.MAX_SPEED,
+                    scaleFactor, minAngleGap));
+            ticks.addAll(labels);
+            for (int speed : ticks) {
+                boolean labeled = labels.contains(speed);
+                float angleOffset = speedToAngleOffset(speed);
                 float angle = START_ANGLE + angleOffset;
                 float cosA = (float) Math.cos(Math.toRadians(angle));
                 float sinA = (float) Math.sin(Math.toRadians(angle));
@@ -322,7 +290,7 @@ public class CircleView extends View {
                 float startY = centerY + radius * sinA;
 
                 float stopX, stopY;
-                if (i % 2 == 0 || i == speedMarkers.length - 1)  {
+                if (labeled) {
                     stopX = centerX + (radius - 80f) * cosA;
                     stopY = centerY + (radius - 80f) * sinA;
                 } else {
@@ -331,10 +299,12 @@ public class CircleView extends View {
                 }
                 canvas.drawLine(startX, startY, stopX, stopY, markerPaint);
 
-                if (!nonlinear || i % 2 == 0 || i == speedMarkers.length - 1) {
+                if (labeled) {
                     float textX = centerX + (radius + NUMBER_OFFSET) * cosA;
                     float textY = centerY + (radius + NUMBER_OFFSET) * sinA;
-                    canvas.drawText(String.valueOf(speedMarkers[i]), textX, textY + 15f, textPaint);
+                    Paint.FontMetrics metrics = textPaint.getFontMetrics();
+                    canvas.drawText(String.valueOf(speed), textX,
+                            textY - (metrics.ascent + metrics.descent) / 2f, textPaint);
                 }
             }
 

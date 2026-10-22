@@ -1,6 +1,6 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
-    <style name="Base.Theme.AnimationProject" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Base.Theme.NLSMeter" parent="Theme.Material3.DayNight.NoActionBar">
         <!-- Customize your light theme here. -->
         <!-- Цвет статус-бара -->
         <item name="android:statusBarColor">@color/blue</item>
@@ -10,5 +10,5 @@
 
     </style>
 
-    <style name="Theme.AnimationProject" parent="Base.Theme.AnimationProject" />
+    <style name="Theme.NLSMeter" parent="Base.Theme.NLSMeter" />
 </resources>

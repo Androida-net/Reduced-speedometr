@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">NLSMeter</string>
+    <string name="scale_settings">Настройки шкалы</string>
 </resources>

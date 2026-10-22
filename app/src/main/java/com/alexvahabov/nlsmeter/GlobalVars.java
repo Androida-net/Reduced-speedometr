@@ -1,8 +1,8 @@
-package com.example.animationproject;
+package com.alexvahabov.nlsmeter;
 
 public class GlobalVars {
     public static int MyTimer = 0;                              // Скорость по GPS
-    public static int SWarn = 74;                               // Предупреждение (желтым)
+    public static int SWarn = 70;                               // Предупреждение (желтым)
     public static int SMax = 80;                                // превышение (красным)
 
     public static double currentLatitude;                       // Широта (-90.0 до +90.0)
@@ -21,8 +21,11 @@ public class GlobalVars {
 
     /** Текущий максимум шкалы (км/ч). */
     public static int MAX_SPEED = DEFAULT_MAX_SPEED;
-    public static final String KEY_NONLINEAR = "nonlinear";
+    public static final String KEY_SCALE_FACTOR = "scale_factor";
+    public static final String KEY_NONLINEAR = "nonlinear"; // Прежняя настройка, для миграции.
+    public static final int[] SCALE_FACTORS = {1, 2, 4, 8, 16};
+    public static final int DEFAULT_SCALE_FACTOR = 4;
 
-    /** true — нелинейная шкала (подробнее в средней зоне), false — линейная. */
-    public static boolean NONLINEAR = true;
+    /** Масштаб на 1 км/ч в средней зоне относительно обеих крайних зон. */
+    public static int SCALE_FACTOR = DEFAULT_SCALE_FACTOR;
 }

@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AnimationProject"
+rootProject.name = "NLSMeter"
 include(":app")

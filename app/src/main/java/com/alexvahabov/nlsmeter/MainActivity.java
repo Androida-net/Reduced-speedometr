@@ -1,4 +1,4 @@
-package com.example.animationproject;
+package com.alexvahabov.nlsmeter;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -10,7 +10,6 @@ import android.view.WindowManager;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
-import androidx.appcompat.widget.SwitchCompat;
 
 import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
@@ -24,6 +23,8 @@ import android.content.SharedPreferences;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
+import android.widget.Spinner;
+import android.widget.ArrayAdapter;
 import androidx.appcompat.app.AlertDialog;
 
 // Надо повесить на таймер отображение больших цифр
@@ -63,8 +64,8 @@ public class MainActivity extends AppCompatActivity {
         yellowLabel.setPadding(0, pad, 0, pad / 2);
         layout.addView(yellowLabel);
         SeekBar yellowBar = new SeekBar(this);
-        yellowBar.setMax(GlobalVars.MAX_SPEED);
-        yellowBar.setProgress(Math.max(1, Math.min(GlobalVars.SWarn, GlobalVars.MAX_SPEED - 1)));
+        yellowBar.setMax(SpeedThresholds.step(GlobalVars.MAX_SPEED));
+        yellowBar.setProgress(SpeedThresholds.yellowStep(GlobalVars.SWarn, yellowBar.getMax()));
         layout.addView(yellowBar);
 
         final TextView redLabel = new TextView(this);
@@ -72,26 +73,31 @@ public class MainActivity extends AppCompatActivity {
         redLabel.setPadding(0, pad, 0, pad / 2);
         layout.addView(redLabel);
         SeekBar redBar = new SeekBar(this);
-        redBar.setMax(GlobalVars.MAX_SPEED);
-        redBar.setProgress(Math.max(yellowBar.getProgress() + 1,
-                Math.min(GlobalVars.SMax, GlobalVars.MAX_SPEED)));
+        redBar.setMax(SpeedThresholds.step(GlobalVars.MAX_SPEED));
+        redBar.setProgress(SpeedThresholds.redStep(GlobalVars.SMax,
+                yellowBar.getProgress(), redBar.getMax()));
         layout.addView(redBar);
 
         Runnable updateLabels = () -> {
             label.setText("Максимум шкалы: " + (GlobalVars.MIN_MAX_SPEED
                     + sb.getProgress() * GlobalVars.STEP_MAX_SPEED) + " км/ч");
-            yellowLabel.setText("Жёлтый цвет с " + yellowBar.getProgress() + " км/ч");
-            redLabel.setText("Красный цвет с " + redBar.getProgress() + " км/ч");
+            yellowLabel.setText("Жёлтый цвет с "
+                    + SpeedThresholds.speed(yellowBar.getProgress()) + " км/ч");
+            redLabel.setText("Красный цвет с "
+                    + SpeedThresholds.speed(redBar.getProgress()) + " км/ч");
         };
         sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
                 if (!fromUser) return;
                 int max = GlobalVars.MIN_MAX_SPEED + p * GlobalVars.STEP_MAX_SPEED;
-                yellowBar.setMax(max);
-                redBar.setMax(max);
-                yellowBar.setProgress(Math.max(1, Math.min(yellowBar.getProgress(), max - 1)));
-                redBar.setProgress(Math.max(yellowBar.getProgress() + 1,
-                        Math.min(redBar.getProgress(), max)));
+                int maxStep = SpeedThresholds.step(max);
+                yellowBar.setMax(maxStep);
+                redBar.setMax(maxStep);
+                yellowBar.setProgress(SpeedThresholds.yellowStep(
+                        SpeedThresholds.speed(yellowBar.getProgress()), maxStep));
+                redBar.setProgress(SpeedThresholds.redStep(
+                        SpeedThresholds.speed(redBar.getProgress()),
+                        yellowBar.getProgress(), maxStep));
                 updateLabels.run();
             }
             @Override public void onStartTrackingTouch(SeekBar s) {}
@@ -101,7 +107,7 @@ public class MainActivity extends AppCompatActivity {
         yellowBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
                 if (!fromUser) return;
-                int yellow = Math.max(1, Math.min(p, yellowBar.getMax() - 1));
+                int yellow = SpeedThresholds.clamp(p, 1, yellowBar.getMax() - 1);
                 yellowBar.setProgress(yellow);
                 if (redBar.getProgress() <= yellow) redBar.setProgress(yellow + 1);
                 updateLabels.run();
@@ -113,7 +119,7 @@ public class MainActivity extends AppCompatActivity {
         redBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
                 if (!fromUser) return;
-                int red = Math.max(2, Math.min(p, redBar.getMax()));
+                int red = SpeedThresholds.clamp(p, 2, redBar.getMax());
                 redBar.setProgress(red);
                 if (yellowBar.getProgress() >= red) yellowBar.setProgress(red - 1);
                 updateLabels.run();
@@ -123,13 +129,25 @@ public class MainActivity extends AppCompatActivity {
         });
         updateLabels.run();
 
-        // --- Переключатель нелинейности ---
-        final SwitchCompat sw = new SwitchCompat(this);
-        sw.setText("Нелинейная шкала");
-        sw.setChecked(GlobalVars.NONLINEAR);
-        int switchTopPad = (int) (16 * density);
-        sw.setPadding(0, switchTopPad, 0, 0);
-        layout.addView(sw);
+        // --- Коэффициент растяжения центральной зоны ---
+        TextView factorLabel = new TextView(this);
+        factorLabel.setText("Коэффициент шкалы в центре (1 — линейная)");
+        factorLabel.setTextSize(18f);
+        factorLabel.setPadding(0, pad, 0, pad / 2);
+        layout.addView(factorLabel);
+        Spinner factorSpinner = new Spinner(this);
+        String[] factorOptions = {"1", "2", "4", "8", "16"};
+        ArrayAdapter<String> factorAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, factorOptions);
+        factorAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        factorSpinner.setAdapter(factorAdapter);
+        for (int i = 0; i < GlobalVars.SCALE_FACTORS.length; i++) {
+            if (GlobalVars.SCALE_FACTORS[i] == GlobalVars.SCALE_FACTOR) {
+                factorSpinner.setSelection(i);
+                break;
+            }
+        }
+        layout.addView(factorSpinner);
 
         // --- Диалог ---
         new AlertDialog.Builder(this)
@@ -138,30 +156,36 @@ public class MainActivity extends AppCompatActivity {
                 .setPositiveButton("ОК", (d, w) -> {
                     int val = GlobalVars.MIN_MAX_SPEED
                             + sb.getProgress() * GlobalVars.STEP_MAX_SPEED;
-                    applyScaleSettings(val, yellowBar.getProgress(), redBar.getProgress(), sw.isChecked());
+                    applyScaleSettings(val,
+                            SpeedThresholds.speed(yellowBar.getProgress()),
+                            SpeedThresholds.speed(redBar.getProgress()),
+                            GlobalVars.SCALE_FACTORS[factorSpinner.getSelectedItemPosition()]);
                 })
                 .setNegativeButton("Отмена", null)
                 .show();
     }
 
-    /** Применить максимум шкалы, цветовые пороги и режим линейности. */
-    private void applyScaleSettings(int newMax, int yellowSpeed, int redSpeed, boolean nonlinear) {
-        GlobalVars.MAX_SPEED = newMax;
-        GlobalVars.NONLINEAR = nonlinear;
-        GlobalVars.SWarn = yellowSpeed;
-        GlobalVars.SMax = redSpeed;
+    /** Применить максимум шкалы, цветовые пороги и коэффициент центральной зоны. */
+    private void applyScaleSettings(int newMax, int yellowSpeed, int redSpeed, int factor) {
+        GlobalVars.MAX_SPEED = SpeedThresholds.maxSpeed(newMax);
+        GlobalVars.SCALE_FACTOR = SpeedScale.validFactor(factor);
+        int maxStep = SpeedThresholds.step(GlobalVars.MAX_SPEED);
+        int yellowStep = SpeedThresholds.yellowStep(yellowSpeed, maxStep);
+        GlobalVars.SWarn = SpeedThresholds.speed(yellowStep);
+        GlobalVars.SMax = SpeedThresholds.speed(
+                SpeedThresholds.redStep(redSpeed, yellowStep, maxStep));
 
         getSharedPreferences(GlobalVars.PREFS_NAME, MODE_PRIVATE)
                 .edit()
                 .putInt(GlobalVars.KEY_MAX_SPEED, GlobalVars.MAX_SPEED)
                 .putInt(GlobalVars.KEY_SWARN,     GlobalVars.SWarn)
                 .putInt(GlobalVars.KEY_SMAX,      GlobalVars.SMax)
-                .putBoolean(GlobalVars.KEY_NONLINEAR, nonlinear)
+                .putInt(GlobalVars.KEY_SCALE_FACTOR, GlobalVars.SCALE_FACTOR)
                 .apply();
 
-        circleView.setMaxSpeed(newMax);
-        circleView.setNonlinear(nonlinear);
-        circleView.setProgress(newMax);
+        circleView.setMaxSpeed(GlobalVars.MAX_SPEED);
+        circleView.setScaleFactor(GlobalVars.SCALE_FACTOR);
+        circleView.setProgress(GlobalVars.MAX_SPEED);
         circleView.setProgressPointPosition(GlobalVars.MyTimer);
         bigtextView.invalidate();
     }
@@ -173,23 +197,24 @@ public class MainActivity extends AppCompatActivity {
         circleView = findViewById(R.id.circleView);
         // --- Восстанавливаем настройки из SharedPreferences ---
         SharedPreferences prefs = getSharedPreferences(GlobalVars.PREFS_NAME, MODE_PRIVATE);
-        GlobalVars.MAX_SPEED = Math.max(GlobalVars.MIN_MAX_SPEED,
-                Math.min(prefs.getInt(GlobalVars.KEY_MAX_SPEED, GlobalVars.DEFAULT_MAX_SPEED),
-                        GlobalVars.MAX_MAX_SPEED));
-        GlobalVars.SWarn = Math.max(1,
-                Math.min(prefs.getInt(GlobalVars.KEY_SWARN, GlobalVars.SWarn), GlobalVars.MAX_SPEED - 1));
-        GlobalVars.SMax = Math.max(GlobalVars.SWarn + 1,
-                Math.min(prefs.getInt(GlobalVars.KEY_SMAX, GlobalVars.SMax), GlobalVars.MAX_SPEED));
-        GlobalVars.NONLINEAR = prefs.getBoolean(GlobalVars.KEY_NONLINEAR, true);
+        GlobalVars.MAX_SPEED = SpeedThresholds.maxSpeed(
+                prefs.getInt(GlobalVars.KEY_MAX_SPEED, GlobalVars.DEFAULT_MAX_SPEED));
+        int maxStep = SpeedThresholds.step(GlobalVars.MAX_SPEED);
+        int yellowStep = SpeedThresholds.yellowStep(
+                prefs.getInt(GlobalVars.KEY_SWARN, GlobalVars.SWarn), maxStep);
+        GlobalVars.SWarn = SpeedThresholds.speed(yellowStep);
+        GlobalVars.SMax = SpeedThresholds.speed(SpeedThresholds.redStep(
+                prefs.getInt(GlobalVars.KEY_SMAX, GlobalVars.SMax), yellowStep, maxStep));
+        int oldFactor = prefs.contains(GlobalVars.KEY_NONLINEAR)
+                ? (prefs.getBoolean(GlobalVars.KEY_NONLINEAR, true) ? 2 : 1)
+                : GlobalVars.DEFAULT_SCALE_FACTOR;
+        GlobalVars.SCALE_FACTOR = SpeedScale.validFactor(
+                prefs.getInt(GlobalVars.KEY_SCALE_FACTOR, oldFactor));
 
         circleView.setMaxSpeed(GlobalVars.MAX_SPEED);
-        circleView.setNonlinear(GlobalVars.NONLINEAR);
+        circleView.setScaleFactor(GlobalVars.SCALE_FACTOR);
 
-// Долгое нажатие на циферблат открывает настройку
-        circleView.setOnLongClickListener(v -> {
-            showMaxSpeedDialog();
-            return true;
-        });
+        findViewById(R.id.settingsButton).setOnClickListener(v -> showMaxSpeedDialog());
         bigtextView = findViewById(R.id.bigtextView);
         bigtextView.setVisibility(BigTextView.INVISIBLE );
 

@@ -1,4 +1,4 @@
-package com.example.animationproject;
+package com.alexvahabov.nlsmeter;
 
 import android.content.Context;
 import android.graphics.Canvas;

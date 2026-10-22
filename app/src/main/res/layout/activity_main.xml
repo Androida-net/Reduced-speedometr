@@ -13,12 +13,12 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-        <com.example.animationproject.CircleView
+        <com.alexvahabov.nlsmeter.CircleView
             android:id="@+id/circleView"
             android:layout_width="match_parent"
             android:layout_height="wrap_content" />   <!-- было 0dp + weight=1 -->
 
-        <com.example.animationproject.BigTextView
+        <com.alexvahabov.nlsmeter.BigTextView
             android:id="@+id/bigtextView"
             android:layout_width="match_parent"
             android:layout_height="0dp"
@@ -28,7 +28,7 @@
     </LinearLayout>
 
     <!-- Строка «Work time + GPS» внизу, поверх -->
-    <com.example.animationproject.NumberView
+    <com.alexvahabov.nlsmeter.NumberView
         android:layout_width="match_parent"
         android:layout_height="48dp"
         android:layout_gravity="bottom" />
@@ -42,4 +42,19 @@
         android:text="GO!"
         android:textColor="#dc362e"
         android:textSize="192dp" />
+
+    <!-- Кнопка настроек поверх циферблата, с областью нажатия 48dp. -->
+    <TextView
+        android:id="@+id/settingsButton"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="top|start"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:clickable="true"
+        android:contentDescription="@string/scale_settings"
+        android:focusable="true"
+        android:gravity="center"
+        android:text="&#8942;"
+        android:textColor="@android:color/white"
+        android:textSize="32sp" />
 </FrameLayout>

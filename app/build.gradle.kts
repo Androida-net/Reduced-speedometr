@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.animationproject"
+    namespace = "com.alexvahabov.nlsmeter"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.animationproject"
+        applicationId = "com.alexvahabov.NLSmeter"
         minSdk = 21
         targetSdk = 35
         versionCode = 1
