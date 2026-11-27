@@ -1,0 +1,11 @@
+NLSMeter is a GPS speedometer with a nonlinear gauge. Unlike a conventional linear dial, it can stretch the middle of the speed range relative to both ends, making changes around the center easier to see. Current speed appears on the gauge and as a large number in km/h.
+
+Features:
+* Set the gauge maximum from 40 to 300 km/h in steps of 10 km/h.
+* Choose how strongly the center is magnified relative to the outer ranges: 2, 4, 8 or 16 times. Select 1 for a linear scale.
+* Choose the speeds at which the gauge and number turn yellow and red.
+* See elapsed time and GPS coordinates at the bottom of the screen.
+
+Open the three-dot button in the upper-left corner to adjust the gauge. Your settings are saved on the device.
+
+NLSMeter needs precise location permission to read GPS speed. It stops requesting location updates when the app is no longer visible. It does not require an account or network access.
